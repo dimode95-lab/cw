@@ -1,0 +1,12 @@
+# 모압매수 자동매매 크론 설정
+# 설치: crontab -e 로 열어서 아래 내용 붙여넣기 (경로는 본인 환경에 맞게 수정)
+#
+# ※ 서버 시간대가 UTC라면 아래처럼 CRON_TZ 지정이 안 되는 배포판(우분투 기본 cron)에서는
+#    scripts/setup_ec2.sh 가 서버 시간대를 Asia/Seoul 로 바꿔주므로 그대로 쓰면 됩니다.
+
+# 평일 18:10 KST — 매수 2 / 매도 2 예약주문 + 텔레그램 알림
+10 18 * * 1-5 cd /home/ubuntu/cw && .venv/bin/python -m moap place >> logs/place.log 2>&1
+
+# 화~토 08:20 KST — 전일 밤 미국장 체결 결과 확인 + 텔레그램 알림
+# (월요일 주문분은 화요일 아침에 확인되므로 화~토)
+20 8 * * 2-6 cd /home/ubuntu/cw && .venv/bin/python -m moap check >> logs/check.log 2>&1

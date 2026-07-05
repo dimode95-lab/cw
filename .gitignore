@@ -1,0 +1,14 @@
+# 비밀정보 — 절대 커밋 금지
+.env
+service_account.json
+*.pem
+
+# 로컬 데이터
+*.db
+logs/*.log
+.kis_token_*.json
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
