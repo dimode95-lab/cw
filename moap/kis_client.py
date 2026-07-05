@@ -24,16 +24,24 @@ EXCD_MAP = {"NASD": "NAS", "NYSE": "NYS", "AMEX": "AMS"}
 # TR ID 매핑 (해외주식 미국)
 TR_IDS = {
     "real": {
+        "buy": "TTTT1002U",        # 미국 매수 (LOC/MOC/지정가 공통)
+        "sell": "TTTT1006U",       # 미국 매도
         "resv_buy": "TTTT3016U",   # 미국 예약 매수
         "resv_sell": "TTTT3017U",  # 미국 예약 매도
         "ccnl": "TTTS3035R",       # 주문체결내역
     },
     "paper": {
+        "buy": "VTTT1002U",
+        "sell": "VTTT1001U",
         "resv_buy": "VTTT3016U",
         "resv_sell": "VTTT3017U",
         "ccnl": "VTTS3035R",
     },
 }
+
+# 주문구분: 지정가/장마감시장가(MOC)/장마감지정가(LOC)
+# ※ MOC/LOC 는 실전투자 전용 — 모의투자에서는 미지원 (README 참고)
+ORD_DVSN = {"LIMIT": "00", "MOC": "33", "LOC": "34"}
 
 
 class KisError(RuntimeError):
@@ -112,6 +120,62 @@ class KisClient:
         if not last:
             raise KisError(f"{symbol} 현재가 조회 실패: {data.get('msg1', data)}")
         return float(last)
+
+    def get_daily_closes(self, exchange: str, symbol: str, count: int = 6) -> list[dict]:
+        """해외주식 일별 시세 (HHDFS76240000). 최신순 [{date, close, high, low}...]"""
+        resp = requests.get(
+            f"{self.base}/uapi/overseas-price/v1/quotations/dailyprice",
+            headers=self._headers("HHDFS76240000"),
+            params={"AUTH": "", "EXCD": EXCD_MAP.get(exchange, exchange), "SYMB": symbol,
+                    "GUBN": "0", "BYMD": "", "MODP": "1"},
+            timeout=10,
+        )
+        data = resp.json()
+        rows = data.get("output2") or []
+        if not rows:
+            raise KisError(f"{symbol} 일별시세 조회 실패: {data.get('msg1', data)}")
+        out = []
+        for r in rows[:count]:
+            if not r.get("clos"):
+                continue
+            out.append({"date": r.get("xymd", ""), "close": float(r["clos"]),
+                        "high": float(r.get("high") or r["clos"]),
+                        "low": float(r.get("low") or r["clos"])})
+        return out
+
+    # ── 주문 (지정가/LOC/MOC) ─────────────────────────────
+    def place_order(self, side: str, symbol: str, exchange: str, qty: int,
+                    price: float, order_type: str = "LIMIT") -> dict:
+        """미국 주식 주문. order_type: LIMIT | LOC | MOC (LOC/MOC는 실전 전용).
+
+        반환: {'ok': bool, 'order_no': str, 'msg': str, 'raw': dict}
+        """
+        body = {
+            "CANO": self.s.kis_account_no,
+            "ACNT_PRDT_CD": self.s.kis_account_prod,
+            "OVRS_EXCG_CD": exchange,
+            "PDNO": symbol,
+            "ORD_QTY": str(qty),
+            "OVRS_ORD_UNPR": f"{price:.2f}" if order_type != "MOC" else "0",
+            "ORD_SVR_DVSN_CD": "0",
+            "ORD_DVSN": ORD_DVSN[order_type],
+        }
+        if side == "sell":
+            body["SLL_TYPE"] = "00"
+        resp = requests.post(
+            f"{self.base}/uapi/overseas-stock/v1/trading/order",
+            headers=self._headers(self.tr[side], body),
+            json=body,
+            timeout=10,
+        )
+        data = resp.json()
+        output = data.get("output") or {}
+        return {
+            "ok": data.get("rt_cd") == "0",
+            "order_no": output.get("ODNO", ""),
+            "msg": data.get("msg1", "").strip(),
+            "raw": data,
+        }
 
     # ── 예약주문 ──────────────────────────────────────────
     def place_reserved_order(self, side: str, symbol: str, exchange: str,

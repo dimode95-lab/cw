@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────
+# 무한매수법 v4.0 설정
+#
+# principal      : 시작 원금 (USD) — 이 금액 안에서만 운용
+# divisions      : 분할 수 (20 또는 40 권장; 클수록 방어적)
+# target_pct     : 지정가 매도 % (라오어 오피셜: TQQQ 15, SOXL 20)
+#                  별% 공식도 이 값에서 자동 유도됩니다
+# big_pct        : 큰수매수 % (첫 매수/급락 시 전일종가 대비, 기본 10)
+# ladder_levels  : 하락 대비 1주씩 추가하는 LOC 매수 단계 수
+# compound       : 사이클 종료 시 수익 재투자 여부 (복리 true / 단리 false)
+# enabled        : false 로 두면 해당 종목 주문 중단
+# ─────────────────────────────────────────────────────────────
+
+stocks:
+  - symbol: TQQQ
+    exchange: NASD
+    principal: 10000
+    divisions: 40
+    target_pct: 15
+    big_pct: 10
+    ladder_levels: 8
+    compound: true
+    enabled: true
+
+  - symbol: SOXL
+    exchange: NASD
+    principal: 10000
+    divisions: 40
+    target_pct: 20
+    big_pct: 10
+    ladder_levels: 8
+    compound: true
+    enabled: true
