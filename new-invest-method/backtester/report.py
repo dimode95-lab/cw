@@ -85,7 +85,7 @@ def _metrics_row(name: str, r: BacktestResult, note: str) -> Dict[str, Any]:
     ec_tax = T.apply_tax_to_equity(ec, tax_by_year)
     trades_per_year = M.annual_trade_count(r.trades)
     avg_trades = (sum(trades_per_year.values()) / len(trades_per_year)) if trades_per_year else 0.0
-    worst = M.worst_drawdowns(ec, top_n=5)
+    worst = M.worst_drawdowns(ec, n=5)
     return {
         "전략": name,
         "CAGR(세전)": M.cagr(ec),
