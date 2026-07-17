@@ -1,0 +1,500 @@
+{
+  "_meta": {
+    "source_test_file": "app/src/test/java/com/dimo/mumae/engine/MumaeEngineTest.kt (01.MumaeApp-dev)",
+    "source_impl_file": "app/src/main/java/com/dimo/mumae/engine/MumaeEngine.kt (01.MumaeApp-dev)",
+    "source_models_file": "app/src/main/java/com/dimo/mumae/engine/Models.kt (01.MumaeApp-dev)",
+    "kotlin_test_count": 23,
+    "fixture_entry_count": 25,
+    "note_on_count_mismatch": "Kotlin 테스트 2개(소진 판정, 리버스 종료)는 한 @Test 메서드 안에서 true/false 두 경우를 각각 assert한다. 픽스처에서는 각 경우를 독립 항목으로 분리했다(17a/17b, 18a/18b) — 그래서 23개 @Test가 25개 JSON 항목이 되었다. 나머지는 1:1 대응.",
+    "value_encoding": "모든 금액(BigDecimal)·T값/비율(Double)은 부동소수점 왜곡을 피하기 위해 문자열로 저장한다. 수량(Int)은 JSON 정수로 저장한다(정확히 표현 가능). Enum(Mode/Side/OrderType/OrderRole)은 Kotlin 이름 그대로의 문자열로 저장한다.",
+    "state_fields": "ticker, divisions(=n), principal, cashBalance(=cash), avgPrice(=avg), quantity(=qty), tValue(=t), targetRate(=rate), mode, bigNumberRate. Kotlin StrategyState와 1:1 대응 — Python 포트도 같은 필드명을 쓰면 이 픽스처를 그대로 role/kwargs로 풀어 넣을 수 있다.",
+    "default_state_reference": {
+      "ticker": "TQQQ",
+      "divisions": 30,
+      "principal": "30000",
+      "cashBalance": "21359.48",
+      "avgPrice": "76.12",
+      "quantity": 119,
+      "tValue": "9.890625",
+      "targetRate": "0.15",
+      "mode": "NORMAL",
+      "bigNumberRate": "0.10"
+    },
+    "rounding_rules": {
+      "starSellPrice": "HALF_UP, 2자리(센트)",
+      "starBuyPrice": "starSellPrice - 0.01",
+      "finalSellPrice": "DOWN, 2자리(센트)",
+      "ladder_rung_price": "HALF_UP, 2자리 (budget / q)",
+      "reverseStarPrice": "HALF_UP, 2자리 (5일 종가 평균)",
+      "applyFills_newAvgPrice": "HALF_UP, 2자리",
+      "note": "MumaeEngine은 Double로 중간계산(MathContext.DECIMAL64) 후 특정 지점에서 BigDecimal.setScale로 반올림한다. Python 포트도 이 계산 경로(Double 연산 → 지점별 반올림) 순서를 그대로 재현해야 센트 단위까지 일치한다 (PLAN.md §4.2)."
+    }
+  },
+  "tests": [
+    {
+      "test_name": "별퍼센트_참고앱실측_5.109375퍼센트",
+      "function": "starPercent",
+      "kotlin_line": 31,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "starPercent": "0.05109375" },
+      "tolerance": { "starPercent": "1e-12" }
+    },
+    {
+      "test_name": "별지점_평단76.12x1.05109375는_매도80.01_매수80.00",
+      "function": "starSellPrice_starBuyPrice",
+      "kotlin_line": 38,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "starSellPrice": "80.01", "starBuyPrice": "80.00" }
+    },
+    {
+      "test_name": "지정가매도_76.12x1.15는_87.53_내림",
+      "function": "finalSellPrice",
+      "kotlin_line": 45,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "finalSellPrice": "87.53" },
+      "note": "76.12*1.15=87.538 -> ROUND_DOWN 2자리 = 87.53 (HALF_UP였으면 87.54가 됨 — 회귀 방지용 핵심 케이스)"
+    },
+    {
+      "test_name": "문서예시_SOXL_평단38.30_T8.6_별지점39.37",
+      "function": "starPercent_starSellPrice",
+      "kotlin_line": 51,
+      "inputs": {
+        "state": {
+          "ticker": "SOXL", "divisions": 20, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "38.30", "quantity": 119, "tValue": "8.6", "targetRate": "0.20",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "starPercent": "0.028", "starSellPrice": "39.37" }
+    },
+    {
+      "test_name": "전반전_주문표_스크린샷실측_별지점6주_평단7주_사다리75.87부터55.90까지",
+      "function": "buildOrders",
+      "kotlin_line": 59,
+      "note_cash_derivation": "cash = 1062.17 * (30 - 9.890625) = 1062.17 * 20.109375 (BigDecimal 정확한 곱셈, 소수 오차 없음)",
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.57484375",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "prevClose": "76.00",
+        "last5Closes": [],
+        "reverseFirstDay": false
+      },
+      "expected": {
+        "oneTimeBudget": "1062.17",
+        "orders": {
+          "STAR_HALF_BUY": { "price": "80.00", "quantity": 6 },
+          "AVG_HALF_BUY": { "price": "76.12", "quantity": 7 },
+          "LADDER_BUY_first6_prices": ["75.87", "70.81", "66.39", "62.48", "59.01", "55.90"],
+          "QUARTER_SELL": { "price": "80.01", "quantity": 29 },
+          "FINAL_SELL": { "price": "87.53", "quantity": 90 }
+        }
+      },
+      "tolerance": { "oneTimeBudget": "0.01" }
+    },
+    {
+      "test_name": "첫매수_문서예시_큰수12퍼센트_617.89달러_51.44에_12주",
+      "function": "buildOrders",
+      "kotlin_line": 89,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 1, "principal": "30000", "cashBalance": "617.89",
+          "avgPrice": "0", "quantity": 0, "tValue": "0.0", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.12"
+        },
+        "prevClose": "45.93",
+        "last5Closes": [],
+        "reverseFirstDay": false
+      },
+      "expected": {
+        "orders": {
+          "FIRST_BUY": { "price": "51.44", "quantity": 12 },
+          "LADDER_BUY_first1_price": "47.53"
+        }
+      },
+      "note": "51.44 = 45.93 * 1.12 (센트 반올림). 47.53 = 617.89 / 13 (alreadyQty=12 다음 rung, HALF_UP)"
+    },
+    {
+      "test_name": "후반전_주문표_전량별지점매수",
+      "function": "buildOrders",
+      "kotlin_line": 101,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "16.0", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "prevClose": "76.00",
+        "last5Closes": [],
+        "reverseFirstDay": false
+      },
+      "expected": {
+        "has_order_with_role": { "FULL_STAR_BUY": true, "STAR_HALF_BUY": false }
+      },
+      "note": "T=16.0 >= divisions/2(=15.0) -> 후반전 분기(별지점 전량 매수)"
+    },
+    {
+      "test_name": "체결반영_두절반매수체결시_T플러스1",
+      "function": "applyFills",
+      "kotlin_line": 111,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "STAR_HALF_BUY", "side": "BUY", "price": "80.00", "quantity": 6, "fee": "0" },
+          { "role": "AVG_HALF_BUY", "side": "BUY", "price": "76.12", "quantity": 7, "fee": "0" }
+        ]
+      },
+      "expected": {
+        "newState.tValue": "10.890625",
+        "newState.quantity": 132
+      },
+      "tolerance": { "newState.tValue": "1e-9" },
+      "note": "별지점 절반 + 평단 절반이 같은 날 모두 체결 -> 합쳐서 T+1 (개별로 +0.5씩이 아님). quantity = 119+6+7"
+    },
+    {
+      "test_name": "체결반영_별지점절반만체결시_T플러스0.5",
+      "function": "applyFills",
+      "kotlin_line": 122,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "STAR_HALF_BUY", "side": "BUY", "price": "80.00", "quantity": 6, "fee": "0" }
+        ]
+      },
+      "expected": { "newState.tValue": "10.390625" },
+      "tolerance": { "newState.tValue": "1e-9" }
+    },
+    {
+      "test_name": "체결반영_쿼터매도시_T곱하기0.75",
+      "function": "applyFills",
+      "kotlin_line": 131,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "7.0", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "QUARTER_SELL", "side": "SELL", "price": "80.01", "quantity": 29, "fee": "0" }
+        ]
+      },
+      "expected": {
+        "newState.tValue": "5.25",
+        "newState.quantity": 90,
+        "realizedPnl": "112.81"
+      },
+      "tolerance": { "newState.tValue": "1e-9" },
+      "note": "realizedPnl = (80.01 - 76.12) * 29 = 3.89 * 29 = 112.81"
+    },
+    {
+      "test_name": "체결반영_지정가전량매도시_사이클종료",
+      "function": "applyFills",
+      "kotlin_line": 143,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 90, "tValue": "5.25", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "FINAL_SELL", "side": "SELL", "price": "87.53", "quantity": 90, "fee": "0" }
+        ]
+      },
+      "expected": {
+        "cycleClosed": true,
+        "newState.quantity": 0,
+        "newState.tValue": "0.0"
+      },
+      "tolerance": { "newState.tValue": "1e-9" }
+    },
+    {
+      "test_name": "체결반영_지정가매도후LOC매수겹친날은_곱하기0.25후_플러스1",
+      "function": "applyFills",
+      "kotlin_line": 154,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 90, "tValue": "8.0", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "FINAL_SELL", "side": "SELL", "price": "87.53", "quantity": 90, "fee": "0" },
+          { "role": "STAR_HALF_BUY", "side": "BUY", "price": "80.00", "quantity": 6, "fee": "0" },
+          { "role": "AVG_HALF_BUY", "side": "BUY", "price": "76.12", "quantity": 7, "fee": "0" }
+        ]
+      },
+      "expected": {
+        "newState.tValue": "3.0",
+        "cycleClosed": false
+      },
+      "tolerance": { "newState.tValue": "1e-9" },
+      "note": "규칙 2-(4): T = 8.0*0.25 + 1.0 = 3.0. 매도로 수량이 0이 되어도 같은 날 매수(6+7=13주)가 겹쳐 최종 보유수량은 13 -> 사이클 미종료"
+    },
+    {
+      "test_name": "리버스_첫날매도_T39.5곱하기0.95는37.525",
+      "function": "applyFills",
+      "kotlin_line": 169,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 200, "tValue": "39.5", "targetRate": "0.15",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "REVERSE_FIRST_SELL", "side": "SELL", "price": "50.00", "quantity": 10, "fee": "0" }
+        ]
+      },
+      "expected": { "newState.tValue": "37.525" },
+      "tolerance": { "newState.tValue": "1e-9" },
+      "note": "T *= (1 - 2/n) = (1 - 2/40) = 0.95"
+    },
+    {
+      "test_name": "리버스_쿼터매수시_T는37.525플러스잔여의4분의1",
+      "function": "applyFills",
+      "kotlin_line": 178,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 190, "tValue": "37.525", "targetRate": "0.15",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "fills": [
+          { "role": "REVERSE_BUY", "side": "BUY", "price": "48.00", "quantity": 3, "fee": "0" }
+        ]
+      },
+      "expected": { "newState.tValue": "38.14375" },
+      "tolerance": { "newState.tValue": "1e-9" },
+      "note": "T += (n - T) * 0.25 = 37.525 + (40-37.525)*0.25 = 37.525 + 0.61875"
+    },
+    {
+      "test_name": "리버스_매도수량은직전보유의20등분내림",
+      "function": "buildOrders",
+      "kotlin_line": 187,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "400",
+          "avgPrice": "76.12", "quantity": 198, "tValue": "39.5", "targetRate": "0.15",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "prevClose": "50.00",
+        "last5Closes": ["50.00", "50.00", "50.00", "50.00", "50.00"],
+        "reverseFirstDay": true
+      },
+      "expected": {
+        "orders": {
+          "REVERSE_FIRST_SELL": { "quantity": 9, "type": "MOC" }
+        },
+        "no_buy_orders": true
+      },
+      "note": "198 / (40/2=20) = 9.9 -> 내림 9. 첫날은 매수 없음(무조건 매도만)"
+    },
+    {
+      "test_name": "리버스_둘째날부터5일평균별지점기준_매도와쿼터매수",
+      "function": "buildOrders",
+      "kotlin_line": 201,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "700",
+          "avgPrice": "76.12", "quantity": 190, "tValue": "37.525", "targetRate": "0.15",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "prevClose": "50.00",
+        "last5Closes": ["50.00", "51.00", "49.00", "50.50", "49.50"],
+        "reverseFirstDay": false
+      },
+      "expected": {
+        "reverseStarPrice": "50.00",
+        "orders": {
+          "REVERSE_SELL": { "quantity": 9, "price": "50.00" },
+          "REVERSE_BUY": { "quantity": 3, "price": "49.99" }
+        }
+      },
+      "note": "190/20=9.5->9. 매수가=별지점-0.01=49.99. 쿼터매수 예산=700/4=175, 175/49.99=3.5->3"
+    },
+    {
+      "test_name": "소진판정_T가n-1초과시_리버스진입_true",
+      "function": "shouldEnterReverse",
+      "kotlin_line": 222,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 100, "tValue": "39.1", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "shouldEnterReverse": true },
+      "note": "isExhausted = tValue > divisions-1.0 = 39.1 > 39.0 -> true, mode NORMAL, quantity>0 -> 진입"
+    },
+    {
+      "test_name": "소진판정_T가n-1초과안함_false",
+      "function": "shouldEnterReverse",
+      "kotlin_line": 224,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 100, "tValue": "38.9", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "shouldEnterReverse": false },
+      "note": "38.9 > 39.0 은 false"
+    },
+    {
+      "test_name": "리버스종료_종가가평단대비마이너스R초과하락시_일반모드복귀_true",
+      "function": "shouldExitReverse",
+      "kotlin_line": 228,
+      "inputs": {
+        "state": {
+          "ticker": "SOXL", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "40.00", "quantity": 119, "tValue": "9.890625", "targetRate": "0.20",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "close": "31.99"
+      },
+      "expected": { "shouldExitReverse": true },
+      "note": "threshold = avg*(1-R) = 40.00*0.80 = 32.00. close(31.99) < 32.00 -> true"
+    },
+    {
+      "test_name": "리버스종료_종가가평단대비마이너스R초과하락아님_false",
+      "function": "shouldExitReverse",
+      "kotlin_line": 231,
+      "inputs": {
+        "state": {
+          "ticker": "SOXL", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "40.00", "quantity": 119, "tValue": "9.890625", "targetRate": "0.20",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "close": "32.01"
+      },
+      "expected": { "shouldExitReverse": false },
+      "note": "close(32.01) < 32.00 은 false"
+    },
+    {
+      "test_name": "1회매수금_문서예시_19522나누기39",
+      "function": "oneTimeBudget",
+      "kotlin_line": 235,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "19522",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "1.0", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        }
+      },
+      "expected": { "oneTimeBudget": "500.5641" },
+      "tolerance": { "oneTimeBudget": "0.001" },
+      "note": "19522 / (40-1) = 19522/39 = 500.564102564..."
+    },
+    {
+      "test_name": "큰수조정_폭락시_전일종가플러스10퍼센트를넘는LOC매수는큰수로낮춰건다",
+      "function": "buildOrders",
+      "kotlin_line": 243,
+      "note_cash_derivation": "cash = 1062.17 * (30 - 9.890625) = 21359.57484375 (테스트5와 동일 파생)",
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.57484375",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "prevClose": "60.00",
+        "last5Closes": [],
+        "reverseFirstDay": false
+      },
+      "expected": {
+        "big_number_cap": "66.00",
+        "all_buy_orders_price_lte_cap": true,
+        "orders": {
+          "STAR_HALF_BUY": { "price": "66.00", "quantity": 6, "label_contains": "큰수 조정" },
+          "QUARTER_SELL": { "price": "80.01" },
+          "FINAL_SELL": { "price": "87.53" }
+        }
+      },
+      "note": "cap = prevClose*(1+bigNumberRate) = 60.00*1.10 = 66.00. 원래 별지점 매수가(80.00)가 cap을 넘으므로 66.00으로 낮춰서 건다. 수량은 원래 별지점 기준 그대로(6주). 매도가는 조정하지 않는다(쿼터매도/지정가매도 가격 불변)."
+    },
+    {
+      "test_name": "큰수조정_평상시별지점이큰수아래에는_아무것도바뀌지않는다",
+      "function": "buildOrders",
+      "kotlin_line": 264,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.57484375",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "9.890625", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "prevClose": "76.00",
+        "last5Closes": [],
+        "reverseFirstDay": false
+      },
+      "expected": { "no_order_label_contains": "큰수 조정" }
+    },
+    {
+      "test_name": "리버스_보유수량이등분수보다적어도_최소1주는매도한다",
+      "function": "buildOrders",
+      "kotlin_line": 274,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 40, "principal": "30000", "cashBalance": "400",
+          "avgPrice": "76.12", "quantity": 10, "tValue": "39.5", "targetRate": "0.15",
+          "mode": "REVERSE", "bigNumberRate": "0.10"
+        },
+        "prevClose": "50.00",
+        "last5Closes": ["50.00", "50.00", "50.00", "50.00", "50.00"],
+        "reverseFirstDay": true
+      },
+      "expected": {
+        "orders": { "REVERSE_FIRST_SELL": { "quantity": 1 } }
+      },
+      "note": "10/(40/2=20)=0.5 -> 내림 0이지만 최소 1주로 강제"
+    },
+    {
+      "test_name": "T가0이어도_보유수량이있으면_첫매수가아니라_일반주문표(매도포함)를만든다",
+      "function": "buildOrders",
+      "kotlin_line": 286,
+      "inputs": {
+        "state": {
+          "ticker": "TQQQ", "divisions": 30, "principal": "30000", "cashBalance": "21359.48",
+          "avgPrice": "76.12", "quantity": 119, "tValue": "0.0", "targetRate": "0.15",
+          "mode": "NORMAL", "bigNumberRate": "0.10"
+        },
+        "prevClose": "76.00",
+        "last5Closes": [],
+        "reverseFirstDay": false
+      },
+      "expected": {
+        "has_order_with_role": {
+          "FIRST_BUY": false,
+          "QUARTER_SELL": true,
+          "FINAL_SELL": true
+        }
+      },
+      "note": "T=0이지만 quantity>0(상태 보정으로 T=0·보유 119주가 된 경우)이면 quantity==0 분기(첫매수)로 빠지지 않는다"
+    }
+  ]
+}
